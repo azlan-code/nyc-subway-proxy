@@ -1,4 +1,5 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
+import stops from "./stops.json" with { type: "json" };
 
 export const lambda_handler = async (event) => {
     const deviceKey = event.headers?.["x-device-key"];
@@ -12,8 +13,9 @@ export const lambda_handler = async (event) => {
     if (!queryParams) return error_response("No query parameters provided");
 
     const urlSuffix = queryParams.urlSuffix ? `-${queryParams.urlSuffix}` : "";
-    const stopId = queryParams.stopId;
+    let stopId = queryParams.stopId;
     if (!stopId) return error_response("Stop id is required");
+    stopId = stopId.toUpperCase().replace(/[NS]$/, "");
 
     const resp = await fetch(BASE_URL + urlSuffix);
     if (!resp.ok) {
@@ -26,7 +28,10 @@ export const lambda_handler = async (event) => {
     );
 
     const now = Math.floor(Date.now() / 1000);
-    const arrivals = [];
+    const northId = stopId + "N";
+    const southId = stopId + "S";
+    const northbound = [];
+    const southbound = [];
 
     for (const entity of feed.entity) {
         const tu = entity.tripUpdate;
@@ -35,22 +40,31 @@ export const lambda_handler = async (event) => {
         const line = tu.trip?.routeId;
         if (!line) continue;
 
-        for (const { stopId: id, arrival } of tu.stopTimeUpdate ?? []) {
-            if (id !== stopId || !arrival?.time) continue;
+        const updates = tu.stopTimeUpdate ?? [];
+        if (updates.length === 0) continue;
+
+        // stopTimeUpdate only lists the trip's remaining stops, so the last one is its terminal
+        const lastId = updates[updates.length - 1].stopId;
+        const terminalId = lastId ? lastId.replace(/[NS]$/, "") : null;
+        const destination = terminalId ? (stops[terminalId] ?? terminalId) : null;
+
+        for (const { stopId: id, arrival } of updates) {
+            if ((id !== northId && id !== southId) || !arrival?.time) continue;
 
             const minutes = Math.round((Number(arrival.time) - now) / 60);
-            if (minutes > 0 && minutes < 60) {
-                arrivals.push({ line, minutes });
+            if (minutes > 0) {
+                (id === northId ? northbound : southbound).push({ line, minutes, destination });
             }
         }
     }
 
-    arrivals.sort((a, b) => a.minutes - b.minutes);
-    const nextArrivals = arrivals.slice(0, 2);
+    const byTime = (a, b) => a.minutes - b.minutes;
 
     return success_response({
         station: stopId,
-        arrivals: nextArrivals,
+        stationName: stops[stopId] ?? null,
+        northbound: northbound.sort(byTime).slice(0, 5),
+        southbound: southbound.sort(byTime).slice(0, 5),
     });
 }
 

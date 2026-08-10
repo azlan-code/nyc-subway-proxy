@@ -1,4 +1,5 @@
 from aws_cdk import (
+    Duration,
     Stack,
     aws_lambda as lambda_,
 )
@@ -23,6 +24,7 @@ class ProxyStack(Stack):
             handler="fetch_mta.lambda_handler",
             code=lambda_.Code.from_asset("lambda/functions/fetch_mta"),
             layers=[gtfs_layer],
+            timeout=Duration.seconds(10),
             environment={"DEVICE_KEY": device_key}
         )
 
